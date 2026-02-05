@@ -176,7 +176,7 @@ Click **New Version** from the scenario detail page, or **Create Scenario** from
 The wizard has 8 steps with Previous/Next navigation at the bottom:
 
 #### Step 1: Trial Info
-- **Trial Code** — e.g., `CBX-250-001`
+- **Trial Code** — e.g., `TRIAL-001`
 - **Phase** — dropdown: P1, P1A, P1B, P2, P2A, P2B, P3, P4
 - **Countries** — tag input (type and press Enter to add)
 - **Start Date** — date picker

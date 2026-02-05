@@ -12,7 +12,7 @@ from app.schemas.canonical import CanonicalScenarioInput
 class ScenarioCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    trial_code: str = Field(..., examples=["CBX-250-001"])
+    trial_code: str = Field(..., examples=["TRIAL-001"])
     name: str = Field(..., examples=["Baseline"])
     description: Optional[str] = None
     study_id: Optional[UUID] = None
