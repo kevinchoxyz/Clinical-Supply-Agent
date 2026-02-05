@@ -7,6 +7,7 @@ export interface Node {
   name: string | null;
   country: string | null;
   is_active: boolean;
+  study_id: UUID | null;
   attributes: Record<string, unknown> | null;
   created_at: string;
 }
@@ -16,6 +17,7 @@ export interface NodeCreate {
   node_type: string;
   name?: string;
   country?: string;
+  study_id?: string;
   attributes?: Record<string, unknown>;
 }
 
@@ -32,6 +34,21 @@ export interface Lot {
   updated_at: string;
 }
 
+export interface VialCreate {
+  medication_number: string;
+  status?: string;
+}
+
+export interface Vial {
+  id: UUID;
+  lot_id: UUID;
+  medication_number: string;
+  status: string;
+  dispensed_at: string | null;
+  dispensed_to_subject_id: UUID | null;
+  created_at: string;
+}
+
 export interface LotCreate {
   node_id: string;
   product_id: string;
@@ -40,6 +57,13 @@ export interface LotCreate {
   expiry_date?: string;
   status?: string;
   qty_on_hand?: number;
+  vials?: VialCreate[];
+}
+
+export interface LotWithVials extends Lot {
+  vials: Vial[];
+  vial_count: number;
+  available_count: number;
 }
 
 export interface Transaction {

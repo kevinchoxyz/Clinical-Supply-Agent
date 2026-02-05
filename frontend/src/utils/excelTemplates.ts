@@ -83,3 +83,16 @@ export function downloadEnrollmentCurveTemplate() {
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
   downloadWorkbook(wb, 'enrollment_curve_template.xlsx');
 }
+
+export function downloadLotsTemplate() {
+  const wb = XLSX.utils.book_new();
+  const headers = ['node_id', 'product_id', 'presentation_id', 'lot_number', 'qty_on_hand', 'status', 'expiry_date', 'medication_numbers'];
+  const sampleRows = [
+    ['SITE-001', 'DRUG-A', 'VIAL-10MG', 'LOT-2025-001', 10, 'RELEASED', '2026-12-31', 'MED001,MED002,MED003'],
+    ['SITE-001', 'DRUG-A', 'VIAL-10MG', 'LOT-2025-002', 5, 'RELEASED', '2026-06-30', 'MED004,MED005'],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
+  ws['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 4, 20) }));
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+  downloadWorkbook(wb, 'lots_template.xlsx');
+}

@@ -207,6 +207,42 @@ uvicorn app.main:app --reload
 2. `frontend/src/api/xxx.ts` - Add client function
 3. `frontend/src/hooks/useXxx.ts` - Add React Query hook
 
+### Inventory Enhancements (Feb 2026)
+
+#### Study-Scoped Inventory
+- Added `study_id` field to `InventoryNode` model
+- All inventory data (nodes, lots, transactions, positions) now filterable by study
+- Inventory page shows warning when no study selected
+- Nodes, lots, transactions, positions all scoped to selected study
+
+#### Delete Functionality
+- DELETE endpoints for nodes: `DELETE /inventory/nodes/{node_id}`
+- DELETE endpoints for lots: `DELETE /inventory/lots/{lot_id}`
+- DELETE endpoints for vials: `DELETE /inventory/vials/{vial_id}`
+- Frontend delete buttons with Popconfirm on nodes and lots
+
+#### Individual Vial Tracking (medication_number)
+- New `InventoryVial` model with unique `medication_number` per lot
+- Vial statuses: AVAILABLE, DISPENSED, RETURNED, DESTROYED
+- Lot detail endpoint: `GET /inventory/lots/{lot_id}/detail` returns lot info + vials
+- Frontend "View Vials" button opens drill-down modal with:
+  - Lot summary (product, qty, status, expiry)
+  - Individual vials table (medication_number, status, dispensed_at)
+
+#### Excel Upload/Download
+- Nodes: Download template, upload bulk nodes with study_id
+- Lots: Download template with columns: node_id, product_id, presentation_id, lot_number, qty_on_hand, status, expiry_date, medication_numbers
+- medication_numbers column accepts comma-separated vial IDs (e.g., "MED001,MED002,MED003")
+- Bulk upload endpoints: `POST /inventory/nodes/bulk`, `POST /inventory/lots/bulk`
+
+#### Inventory Cascade Deletes
+```
+InventoryNode (delete)
+   └── InventoryLot (cascade)
+          ├── InventoryVial (cascade)
+          └── InventoryTransaction (cascade)
+```
+
 ## Testing Checklist
 1. Study creation with dosing_strategy=weight_based, arms, cohorts, per-visit doses
 2. Study creation with dosing_strategy=fixed, dose_value columns
@@ -215,6 +251,13 @@ uvicorn app.main:app --reload
 5. Backward compat: existing scenarios with enrollment_waves still work
 6. Delete studies (blocked if has linked scenarios)
 7. Delete scenarios (cascades to versions, forecast runs, subjects, visits, kit assignments)
+8. Inventory: Select study → only nodes for that study appear
+9. Inventory: Create node with study_id → appears in correct study's view
+10. Inventory: Delete node → cascades to lots, vials, transactions
+11. Inventory: Delete lot → cascades to vials, transactions
+12. Inventory: Excel upload nodes → nodes created with study_id
+13. Inventory: Excel upload lots with medication_numbers → lots and vials created
+14. Inventory: "View Vials" on lot → modal shows individual medication numbers
 
 ## GitHub Repository
 - **URL**: https://github.com/kevinchoxyz/Clinical-Supply-Agent

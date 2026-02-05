@@ -17,24 +17,34 @@ import {
   Spin,
   Typography,
   message,
+  Popconfirm,
+  Descriptions,
 } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, EyeOutlined } from '@ant-design/icons';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import dayjs from 'dayjs';
 
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
+import ExcelUploadModal from '../Scenarios/components/ExcelUploadModal';
 import { useStudyContext } from '../../context/StudyContext';
 import { useStudy } from '../../hooks/useStudies';
 import {
   useNodes,
   useCreateNode,
+  useDeleteNode,
+  useBulkCreateNodes,
   useLots,
   useCreateLot,
+  useDeleteLot,
+  useBulkCreateLots,
+  useLotDetail,
   useTransactions,
   usePositions,
 } from '../../hooks/useInventory';
+import { downloadNodesTemplate, downloadLotsTemplate } from '../../utils/excelTemplates';
+import { parseInventoryNodes, parseLots } from '../../utils/excelParser';
 import type {
   Node,
   NodeCreate,
@@ -42,6 +52,8 @@ import type {
   LotCreate,
   Transaction,
   InventoryPosition,
+  LotWithVials,
+  Vial,
 } from '../../types/inventory';
 
 const CHART_COLORS = [
@@ -62,15 +74,22 @@ const CHART_COLORS = [
 /* ------------------------------------------------------------------ */
 
 const NodesTab: React.FC = () => {
+  const { selectedStudyId } = useStudyContext();
   const { data: nodes, isLoading } = useNodes();
   const createNode = useCreateNode();
+  const deleteNode = useDeleteNode();
+  const bulkCreateNodes = useBulkCreateNodes();
   const [open, setOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [form] = Form.useForm<NodeCreate>();
 
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
-      await createNode.mutateAsync(values);
+      await createNode.mutateAsync({
+        ...values,
+        study_id: selectedStudyId || undefined,
+      });
       message.success('Node created');
       form.resetFields();
       setOpen(false);
@@ -83,6 +102,26 @@ const NodesTab: React.FC = () => {
     }
   };
 
+  const handleDelete = async (nodeId: string) => {
+    try {
+      await deleteNode.mutateAsync(nodeId);
+      message.success('Node deleted');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      message.error(typeof detail === 'string' ? detail : 'Failed to delete node');
+    }
+  };
+
+  const handleUpload = async (data: NodeCreate[]) => {
+    // Add study_id to each node
+    const nodesWithStudy = data.map(n => ({
+      ...n,
+      study_id: selectedStudyId || undefined,
+    }));
+    await bulkCreateNodes.mutateAsync(nodesWithStudy);
+    message.success(`${nodesWithStudy.length} nodes uploaded`);
+  };
+
   if (isLoading) {
     return (
       <div style={{ textAlign: 'center', padding: 80 }}>
@@ -93,11 +132,17 @@ const NodesTab: React.FC = () => {
 
   return (
     <>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+      <Space style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button icon={<DownloadOutlined />} onClick={downloadNodesTemplate}>
+          Download Template
+        </Button>
+        <Button icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+          Upload Nodes
+        </Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
           Add Node
         </Button>
-      </div>
+      </Space>
 
       {(!nodes || nodes.length === 0) ? (
         <EmptyState description="No inventory nodes" actionLabel="Add Node" onAction={() => setOpen(true)} />
@@ -108,9 +153,20 @@ const NodesTab: React.FC = () => {
               <Card
                 title={node.name || node.node_id}
                 extra={
-                  <Tag color={node.node_type === 'DEPOT' ? 'blue' : 'green'}>
-                    {node.node_type}
-                  </Tag>
+                  <Space>
+                    <Tag color={node.node_type === 'DEPOT' ? 'blue' : 'green'}>
+                      {node.node_type}
+                    </Tag>
+                    <Popconfirm
+                      title="Delete this node?"
+                      description="This will also delete all lots and transactions in this node."
+                      onConfirm={() => handleDelete(node.node_id)}
+                      okText="Delete"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" danger icon={<DeleteOutlined />} size="small" />
+                    </Popconfirm>
+                  </Space>
                 }
               >
                 <p>
@@ -159,7 +215,91 @@ const NodesTab: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ExcelUploadModal<NodeCreate>
+        title="Upload Nodes"
+        open={uploadOpen}
+        onCancel={() => setUploadOpen(false)}
+        onConfirm={(data) => handleUpload(data)}
+        parseFn={(file: File) => parseInventoryNodes(file, selectedStudyId || undefined)}
+        columns={[
+          { title: 'Node ID', dataIndex: 'node_id', key: 'node_id' },
+          { title: 'Type', dataIndex: 'node_type', key: 'node_type' },
+          { title: 'Name', dataIndex: 'name', key: 'name' },
+          { title: 'Country', dataIndex: 'country', key: 'country' },
+        ]}
+        onDownloadTemplate={downloadNodesTemplate}
+      />
     </>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Lot Detail Modal                                                   */
+/* ------------------------------------------------------------------ */
+
+const LotDetailModal: React.FC<{ lotId: string | null; onClose: () => void }> = ({ lotId, onClose }) => {
+  const { data: lotDetail, isLoading } = useLotDetail(lotId || '');
+
+  const vialColumns = [
+    { title: 'Medication #', dataIndex: 'medication_number', key: 'medication_number' },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (s: string) => <StatusBadge status={s} />,
+    },
+    {
+      title: 'Dispensed At',
+      dataIndex: 'dispensed_at',
+      key: 'dispensed_at',
+      render: (v: string | null) => (v ? dayjs(v).format('MMM D, YYYY') : '-'),
+    },
+  ];
+
+  return (
+    <Modal
+      title={`Lot Detail: ${lotDetail?.lot_number || ''}`}
+      open={!!lotId}
+      onCancel={onClose}
+      footer={null}
+      width={800}
+    >
+      {isLoading ? (
+        <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+      ) : lotDetail ? (
+        <>
+          <Descriptions bordered size="small" column={2}>
+            <Descriptions.Item label="Product">{lotDetail.product_id}</Descriptions.Item>
+            <Descriptions.Item label="Presentation">{lotDetail.presentation_id || '-'}</Descriptions.Item>
+            <Descriptions.Item label="Total Qty">{lotDetail.qty_on_hand}</Descriptions.Item>
+            <Descriptions.Item label="Status"><StatusBadge status={lotDetail.status} /></Descriptions.Item>
+            <Descriptions.Item label="Vial Count">{lotDetail.vial_count}</Descriptions.Item>
+            <Descriptions.Item label="Available">{lotDetail.available_count}</Descriptions.Item>
+            <Descriptions.Item label="Expiry">
+              {lotDetail.expiry_date ? dayjs(lotDetail.expiry_date).format('MMM D, YYYY') : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label="Updated">
+              {dayjs(lotDetail.updated_at).format('MMM D, YYYY h:mm A')}
+            </Descriptions.Item>
+          </Descriptions>
+          <Typography.Title level={5} style={{ marginTop: 16 }}>
+            Individual Vials ({lotDetail.vials?.length || 0})
+          </Typography.Title>
+          {lotDetail.vials && lotDetail.vials.length > 0 ? (
+            <Table
+              rowKey="id"
+              dataSource={lotDetail.vials}
+              columns={vialColumns}
+              pagination={{ pageSize: 10 }}
+              size="small"
+            />
+          ) : (
+            <Typography.Text type="secondary">No individual vials recorded for this lot.</Typography.Text>
+          )}
+        </>
+      ) : null}
+    </Modal>
   );
 };
 
@@ -168,14 +308,20 @@ const NodesTab: React.FC = () => {
 /* ------------------------------------------------------------------ */
 
 const LotsTab: React.FC = () => {
+  const { selectedStudyId } = useStudyContext();
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [productFilter, setProductFilter] = useState<string | undefined>();
   const { data: lots, isLoading } = useLots({
     status: statusFilter,
     product_id: productFilter || undefined,
   });
+  const { data: nodes } = useNodes();
   const createLot = useCreateLot();
+  const deleteLot = useDeleteLot();
+  const bulkCreateLots = useBulkCreateLots();
   const [open, setOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [detailLotId, setDetailLotId] = useState<string | null>(null);
   const [form] = Form.useForm<LotCreate>();
 
   const handleCreate = async () => {
@@ -200,11 +346,26 @@ const LotsTab: React.FC = () => {
     }
   };
 
+  const handleDelete = async (lotId: string) => {
+    try {
+      await deleteLot.mutateAsync(lotId);
+      message.success('Lot deleted');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      message.error(typeof detail === 'string' ? detail : 'Failed to delete lot');
+    }
+  };
+
+  const handleUpload = async (data: LotCreate[]) => {
+    await bulkCreateLots.mutateAsync(data);
+    message.success(`${data.length} lots uploaded`);
+  };
+
   const columns = [
     { title: 'Lot Number', dataIndex: 'lot_number', key: 'lot_number' },
     { title: 'Product ID', dataIndex: 'product_id', key: 'product_id' },
     { title: 'Presentation', dataIndex: 'presentation_id', key: 'presentation_id', render: (v: string | null) => v ?? '-' },
-    { title: 'Node', dataIndex: 'node_id', key: 'node_id', ellipsis: true },
+    { title: 'Node', dataIndex: 'node_id', key: 'node_id', ellipsis: true, render: (v: string) => v?.toString().slice(0, 8) + '...' },
     { title: 'Qty on Hand', dataIndex: 'qty_on_hand', key: 'qty_on_hand', sorter: (a: Lot, b: Lot) => a.qty_on_hand - b.qty_on_hand },
     { title: 'Status', dataIndex: 'status', key: 'status', render: (s: string) => <StatusBadge status={s} /> },
     {
@@ -214,10 +375,24 @@ const LotsTab: React.FC = () => {
       render: (v: string | null) => (v ? dayjs(v).format('MMM D, YYYY') : '-'),
     },
     {
-      title: 'Created',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (v: string) => dayjs(v).format('MMM D, YYYY'),
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, record: Lot) => (
+        <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => setDetailLotId(record.id)}>
+            View Vials
+          </Button>
+          <Popconfirm
+            title="Delete this lot?"
+            description="This will also delete all vials and transactions for this lot."
+            onConfirm={() => handleDelete(record.id)}
+            okText="Delete"
+            okButtonProps={{ danger: true }}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />}>Delete</Button>
+          </Popconfirm>
+        </Space>
+      ),
     },
   ];
 
@@ -242,6 +417,13 @@ const LotsTab: React.FC = () => {
           value={productFilter}
           onChange={(e) => setProductFilter(e.target.value || undefined)}
         />
+        <div style={{ flex: 1 }} />
+        <Button icon={<DownloadOutlined />} onClick={downloadLotsTemplate}>
+          Download Template
+        </Button>
+        <Button icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+          Upload Lots
+        </Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
           Add Lot
         </Button>
@@ -265,8 +447,14 @@ const LotsTab: React.FC = () => {
         destroyOnClose
       >
         <Form form={form} layout="vertical" preserve={false}>
-          <Form.Item name="node_id" label="Node ID" rules={[{ required: true, message: 'Node ID is required' }]}>
-            <Input placeholder="Node ID" />
+          <Form.Item name="node_id" label="Node" rules={[{ required: true, message: 'Node is required' }]}>
+            <Select placeholder="Select node" showSearch optionFilterProp="children">
+              {nodes?.map((n: Node) => (
+                <Select.Option key={n.node_id} value={n.node_id}>
+                  {n.name || n.node_id} ({n.node_type})
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item name="product_id" label="Product ID" rules={[{ required: true, message: 'Product ID is required' }]}>
             <Input placeholder="Product ID" />
@@ -292,6 +480,31 @@ const LotsTab: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ExcelUploadModal<LotCreate>
+        title="Upload Lots"
+        open={uploadOpen}
+        onCancel={() => setUploadOpen(false)}
+        onConfirm={(data) => handleUpload(data)}
+        parseFn={parseLots}
+        columns={[
+          { title: 'Node ID', dataIndex: 'node_id', key: 'node_id' },
+          { title: 'Product', dataIndex: 'product_id', key: 'product_id' },
+          { title: 'Lot Number', dataIndex: 'lot_number', key: 'lot_number' },
+          { title: 'Qty', dataIndex: 'qty_on_hand', key: 'qty_on_hand' },
+          { title: 'Status', dataIndex: 'status', key: 'status' },
+          {
+            title: 'Vials',
+            dataIndex: 'vials',
+            key: 'vials',
+            render: (v: { medication_number: string }[] | undefined) =>
+              v ? v.map((vial) => vial.medication_number).join(', ') : '-',
+          },
+        ]}
+        onDownloadTemplate={downloadLotsTemplate}
+      />
+
+      <LotDetailModal lotId={detailLotId} onClose={() => setDetailLotId(null)} />
     </>
   );
 };
@@ -510,6 +723,14 @@ const InventoryPage: React.FC = () => {
         <Card size="small" style={{ marginBottom: 16, background: '#f0f5ff', border: '1px solid #adc6ff' }}>
           <Typography.Text>
             Showing data for: <Typography.Text strong>{selectedStudy.study_code} — {selectedStudy.name}</Typography.Text>
+          </Typography.Text>
+        </Card>
+      )}
+
+      {!selectedStudyId && (
+        <Card size="small" style={{ marginBottom: 16, background: '#fff7e6', border: '1px solid #ffd591' }}>
+          <Typography.Text type="warning">
+            No study selected. Please select a study from the header to view study-specific inventory.
           </Typography.Text>
         </Card>
       )}

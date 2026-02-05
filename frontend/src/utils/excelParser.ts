@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { Arm, Cohort, VisitDef, NetworkNode, NetworkLane, EnrollmentCurvePoint } from '../types/scenario';
+import type { NodeCreate, LotCreate, VialCreate } from '../types/inventory';
 
 export interface ParseResult<T> {
   data: T[];
@@ -296,4 +297,81 @@ function coerceBool(val: unknown): boolean {
     return lower === 'true' || lower === 'yes' || lower === '1';
   }
   return false;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Inventory parsers                                                   */
+/* ------------------------------------------------------------------ */
+
+export async function parseInventoryNodes(file: File, studyId?: string): Promise<ParseResult<NodeCreate>> {
+  const wb = await readFile(file);
+  const result = parseExcel<NodeCreate>(
+    wb,
+    { node_id: 'node_id', node_type: 'node_type', name: 'name', country: 'country' },
+    [
+      (row, idx) => (!row.node_id ? `Row ${idx}: node_id is required` : null),
+      (row, idx) => {
+        const valid = ['DEPOT', 'SITE'];
+        if (row.node_type && !valid.includes(String(row.node_type).toUpperCase()))
+          return `Row ${idx}: node_type must be DEPOT or SITE`;
+        return null;
+      },
+    ],
+  );
+  result.data = result.data.map((n) => ({
+    ...n,
+    node_type: (n.node_type ?? 'SITE').toUpperCase(),
+    study_id: studyId,
+  }));
+  return result;
+}
+
+interface LotParseRow extends Omit<LotCreate, 'vials'> {
+  medication_numbers?: string;
+}
+
+export async function parseLots(file: File): Promise<ParseResult<LotCreate>> {
+  const wb = await readFile(file);
+  const result = parseExcel<LotParseRow>(
+    wb,
+    {
+      node_id: 'node_id',
+      product_id: 'product_id',
+      presentation_id: 'presentation_id',
+      lot_number: 'lot_number',
+      qty_on_hand: 'qty_on_hand',
+      status: 'status',
+      expiry_date: 'expiry_date',
+      medication_numbers: 'medication_numbers',
+    },
+    [
+      (row, idx) => (!row.node_id ? `Row ${idx}: node_id is required` : null),
+      (row, idx) => (!row.product_id ? `Row ${idx}: product_id is required` : null),
+      (row, idx) => (!row.lot_number ? `Row ${idx}: lot_number is required` : null),
+    ],
+  );
+
+  // Transform medication_numbers string to vials array
+  const transformedData: LotCreate[] = result.data.map((row) => {
+    const vials: VialCreate[] | undefined = row.medication_numbers
+      ? String(row.medication_numbers)
+          .split(',')
+          .map((m) => m.trim())
+          .filter((m) => m)
+          .map((medication_number) => ({ medication_number, status: 'AVAILABLE' }))
+      : undefined;
+
+    return {
+      node_id: row.node_id,
+      product_id: row.product_id,
+      presentation_id: row.presentation_id || undefined,
+      lot_number: row.lot_number,
+      qty_on_hand: Number(row.qty_on_hand) || 0,
+      status: String(row.status || 'RELEASED').toUpperCase(),
+      expiry_date: row.expiry_date ? String(row.expiry_date) : undefined,
+      vials,
+    };
+  });
+
+  return { data: transformedData, errors: result.errors, warnings: result.warnings };
 }

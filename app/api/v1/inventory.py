@@ -4,21 +4,25 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.inventory import InventoryLot, InventoryNode, InventoryTransaction
+from app.models.inventory import InventoryLot, InventoryNode, InventoryTransaction, InventoryVial
 from app.schemas.inventory import (
     InventoryPosition,
     LotCreate,
     LotOut,
     LotUpdate,
+    LotWithVialsOut,
     NodeCreate,
     NodeOut,
     NodeUpdate,
     TransactionCreate,
     TransactionOut,
+    VialCreate,
+    VialOut,
 )
 
 router = APIRouter()
@@ -41,6 +45,7 @@ def create_node(body: NodeCreate, db: Session = Depends(get_db)):
         node_type=body.node_type,
         name=body.name,
         country=body.country,
+        study_id=body.study_id,
         attributes=body.attributes,
     )
     db.add(node)
@@ -51,12 +56,15 @@ def create_node(body: NodeCreate, db: Session = Depends(get_db)):
 
 @router.get("/inventory/nodes", response_model=list[NodeOut])
 def list_nodes(
+    study_id: UUID | None = Query(None),
     node_type: str | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     q = select(InventoryNode)
+    if study_id:
+        q = q.where(InventoryNode.study_id == study_id)
     if node_type:
         q = q.where(InventoryNode.node_type == node_type.upper())
     q = q.order_by(InventoryNode.node_id).offset(skip).limit(limit)
@@ -86,6 +94,18 @@ def update_node(node_id: str, body: NodeUpdate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(node)
     return node
+
+
+@router.delete("/inventory/nodes/{node_id}", status_code=204)
+def delete_node(node_id: str, db: Session = Depends(get_db)):
+    node = db.execute(
+        select(InventoryNode).where(InventoryNode.node_id == node_id)
+    ).scalar_one_or_none()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    db.delete(node)
+    db.commit()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +143,7 @@ def create_lot(body: LotCreate, db: Session = Depends(get_db)):
 
 @router.get("/inventory/lots", response_model=list[LotOut])
 def list_lots(
+    study_id: UUID | None = Query(None),
     node_id: str | None = Query(None),
     product_id: str | None = Query(None),
     status: str | None = Query(None),
@@ -131,6 +152,8 @@ def list_lots(
     db: Session = Depends(get_db),
 ):
     q = select(InventoryLot)
+    if study_id:
+        q = q.join(InventoryNode).where(InventoryNode.study_id == study_id)
     if node_id:
         node = _resolve_node(db, node_id)
         q = q.where(InventoryLot.node_id == node.id)
@@ -162,6 +185,77 @@ def update_lot(lot_id: UUID, body: LotUpdate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(lot)
     return lot
+
+
+@router.delete("/inventory/lots/{lot_id}", status_code=204)
+def delete_lot(lot_id: UUID, db: Session = Depends(get_db)):
+    lot = db.get(InventoryLot, lot_id)
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    db.delete(lot)
+    db.commit()
+    return None
+
+
+@router.get("/inventory/lots/{lot_id}/detail", response_model=LotWithVialsOut)
+def get_lot_detail(lot_id: UUID, db: Session = Depends(get_db)):
+    lot = db.get(InventoryLot, lot_id)
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    available = sum(1 for v in lot.vials if v.status == "AVAILABLE")
+    return LotWithVialsOut(
+        id=lot.id,
+        node_id=lot.node_id,
+        product_id=lot.product_id,
+        presentation_id=lot.presentation_id,
+        lot_number=lot.lot_number,
+        expiry_date=lot.expiry_date,
+        status=lot.status,
+        qty_on_hand=lot.qty_on_hand,
+        created_at=lot.created_at,
+        updated_at=lot.updated_at,
+        vials=[VialOut(
+            id=v.id,
+            lot_id=v.lot_id,
+            medication_number=v.medication_number,
+            status=v.status,
+            dispensed_at=v.dispensed_at,
+            dispensed_to_subject_id=v.dispensed_to_subject_id,
+            created_at=v.created_at,
+        ) for v in lot.vials],
+        vial_count=len(lot.vials),
+        available_count=available,
+    )
+
+
+@router.get("/inventory/lots/{lot_id}/vials", response_model=list[VialOut])
+def list_vials(lot_id: UUID, db: Session = Depends(get_db)):
+    lot = db.get(InventoryLot, lot_id)
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    return lot.vials
+
+
+@router.post("/inventory/lots/{lot_id}/vials", response_model=VialOut)
+def add_vial(lot_id: UUID, body: VialCreate, db: Session = Depends(get_db)):
+    lot = db.get(InventoryLot, lot_id)
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    vial = InventoryVial(lot_id=lot_id, medication_number=body.medication_number, status=body.status)
+    db.add(vial)
+    db.commit()
+    db.refresh(vial)
+    return vial
+
+
+@router.delete("/inventory/vials/{vial_id}", status_code=204)
+def delete_vial(vial_id: UUID, db: Session = Depends(get_db)):
+    vial = db.get(InventoryVial, vial_id)
+    if not vial:
+        raise HTTPException(status_code=404, detail="Vial not found")
+    db.delete(vial)
+    db.commit()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +309,7 @@ def create_transaction(body: TransactionCreate, db: Session = Depends(get_db)):
 
 @router.get("/inventory/transactions", response_model=list[TransactionOut])
 def list_transactions(
+    study_id: UUID | None = Query(None),
     lot_id: UUID | None = Query(None),
     txn_type: str | None = Query(None),
     skip: int = Query(0, ge=0),
@@ -222,6 +317,8 @@ def list_transactions(
     db: Session = Depends(get_db),
 ):
     q = select(InventoryTransaction)
+    if study_id:
+        q = q.join(InventoryLot).join(InventoryNode).where(InventoryNode.study_id == study_id)
     if lot_id:
         q = q.where(InventoryTransaction.lot_id == lot_id)
     if txn_type:
@@ -237,6 +334,7 @@ def list_transactions(
 
 @router.get("/inventory/positions", response_model=list[InventoryPosition])
 def list_positions(
+    study_id: UUID | None = Query(None),
     node_id: str | None = Query(None),
     product_id: str | None = Query(None),
     db: Session = Depends(get_db),
@@ -260,6 +358,8 @@ def list_positions(
             InventoryLot.presentation_id,
         )
     )
+    if study_id:
+        q = q.where(InventoryNode.study_id == study_id)
     if node_id:
         q = q.where(InventoryNode.node_id == node_id)
     if product_id:
@@ -278,3 +378,73 @@ def list_positions(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Bulk upload endpoints
+# ---------------------------------------------------------------------------
+
+
+class BulkNodesUpload(BaseModel):
+    nodes: list[NodeCreate]
+
+
+class BulkLotsUpload(BaseModel):
+    lots: list[LotCreate]
+
+
+@router.post("/inventory/nodes/bulk", response_model=list[NodeOut])
+def bulk_create_nodes(body: BulkNodesUpload, db: Session = Depends(get_db)):
+    created = []
+    for node_data in body.nodes:
+        existing = db.execute(
+            select(InventoryNode).where(InventoryNode.node_id == node_data.node_id)
+        ).scalar_one_or_none()
+        if existing:
+            continue  # skip existing nodes
+        node = InventoryNode(
+            node_id=node_data.node_id,
+            node_type=node_data.node_type,
+            name=node_data.name,
+            country=node_data.country,
+            study_id=node_data.study_id,
+            attributes=node_data.attributes,
+        )
+        db.add(node)
+        created.append(node)
+    db.commit()
+    for node in created:
+        db.refresh(node)
+    return created
+
+
+@router.post("/inventory/lots/bulk", response_model=list[LotOut])
+def bulk_create_lots(body: BulkLotsUpload, db: Session = Depends(get_db)):
+    created = []
+    for lot_data in body.lots:
+        node = _resolve_node(db, lot_data.node_id)
+        lot = InventoryLot(
+            node_id=node.id,
+            product_id=lot_data.product_id,
+            presentation_id=lot_data.presentation_id,
+            lot_number=lot_data.lot_number,
+            expiry_date=lot_data.expiry_date,
+            status=lot_data.status.upper(),
+            qty_on_hand=lot_data.qty_on_hand,
+        )
+        db.add(lot)
+        db.flush()  # get lot.id
+        # If vials provided, add them
+        if lot_data.vials:
+            for vial_data in lot_data.vials:
+                vial = InventoryVial(
+                    lot_id=lot.id,
+                    medication_number=vial_data.medication_number,
+                    status=vial_data.status,
+                )
+                db.add(vial)
+        created.append(lot)
+    db.commit()
+    for lot in created:
+        db.refresh(lot)
+    return created

@@ -1,10 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    pass
+
+
+# --- Vials ---
+
+class VialCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    medication_number: str
+    status: str = "AVAILABLE"
+
+
+class VialOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    lot_id: UUID
+    medication_number: str
+    status: str
+    dispensed_at: Optional[datetime]
+    dispensed_to_subject_id: Optional[UUID]
+    created_at: datetime
 
 
 # --- Nodes ---
@@ -15,6 +37,7 @@ class NodeCreate(BaseModel):
     node_type: str = "SITE"
     name: Optional[str] = None
     country: Optional[str] = None
+    study_id: Optional[UUID] = None
     attributes: Optional[Dict[str, Any]] = None
 
 
@@ -26,6 +49,7 @@ class NodeOut(BaseModel):
     name: Optional[str]
     country: Optional[str]
     is_active: bool
+    study_id: Optional[UUID]
     attributes: Optional[Dict[str, Any]]
     created_at: datetime
 
@@ -49,6 +73,7 @@ class LotCreate(BaseModel):
     expiry_date: Optional[datetime] = None
     status: str = "RELEASED"
     qty_on_hand: float = 0.0
+    vials: Optional[List[VialCreate]] = None
 
 
 class LotOut(BaseModel):
@@ -70,6 +95,13 @@ class LotUpdate(BaseModel):
     status: Optional[str] = None
     qty_on_hand: Optional[float] = None
     expiry_date: Optional[datetime] = None
+
+
+class LotWithVialsOut(LotOut):
+    model_config = ConfigDict(extra="forbid")
+    vials: List[VialOut] = []
+    vial_count: int = 0
+    available_count: int = 0
 
 
 # --- Transactions ---

@@ -29,8 +29,13 @@ class InventoryNode(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    study_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("studies.id"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
+    study: Mapped["Study"] = relationship(back_populates="inventory_nodes")  # noqa: F821
     lots: Mapped[list["InventoryLot"]] = relationship(back_populates="node", cascade="all, delete-orphan")
 
 
@@ -61,6 +66,7 @@ class InventoryLot(Base):
 
     node: Mapped["InventoryNode"] = relationship(back_populates="lots")
     transactions: Mapped[list["InventoryTransaction"]] = relationship(back_populates="lot", cascade="all, delete-orphan")
+    vials: Mapped[list["InventoryVial"]] = relationship(back_populates="lot", cascade="all, delete-orphan")
 
 
 class InventoryTransaction(Base):
@@ -86,3 +92,24 @@ class InventoryTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     lot: Mapped["InventoryLot"] = relationship(back_populates="transactions")
+
+
+class InventoryVial(Base):
+    """An individual vial within a lot, identified by medication_number."""
+
+    __tablename__ = "inventory_vials"
+    __table_args__ = (
+        UniqueConstraint("lot_id", "medication_number", name="uq_vial_medication_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lot_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inventory_lots.id"), index=True)
+    medication_number: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="AVAILABLE")  # AVAILABLE | DISPENSED | RETURNED | DESTROYED
+
+    dispensed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispensed_to_subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    lot: Mapped["InventoryLot"] = relationship(back_populates="vials")

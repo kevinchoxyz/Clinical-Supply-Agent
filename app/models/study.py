@@ -25,3 +25,4 @@ class Study(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     scenarios: Mapped[list["Scenario"]] = relationship(back_populates="study")  # noqa: F821
+    inventory_nodes: Mapped[list["InventoryNode"]] = relationship(back_populates="study")  # noqa: F821
