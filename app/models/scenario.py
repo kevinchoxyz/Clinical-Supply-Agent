@@ -51,6 +51,10 @@ class ScenarioVersion(Base):
     payload_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     scenario: Mapped["Scenario"] = relationship(back_populates="versions")
+    forecast_runs: Mapped[list["ForecastRun"]] = relationship(
+        back_populates="scenario_version",
+        cascade="all, delete-orphan",
+    )
 
 
 class ForecastRun(Base):
@@ -67,3 +71,5 @@ class ForecastRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     outputs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    scenario_version: Mapped["ScenarioVersion"] = relationship(back_populates="forecast_runs")
