@@ -30,6 +30,10 @@ class Scenario(Base):
         order_by="ScenarioVersion.version",
     )
     study: Mapped["Study"] = relationship(back_populates="scenarios")  # noqa: F821
+    subjects: Mapped[list["Subject"]] = relationship(  # noqa: F821
+        back_populates="scenario",
+        cascade="all, delete-orphan",
+    )
 
 
 class ScenarioVersion(Base):

@@ -38,6 +38,7 @@ class Subject(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
+    scenario: Mapped["Scenario"] = relationship(back_populates="subjects")  # noqa: F821
     visits: Mapped[list["SubjectVisit"]] = relationship(back_populates="subject", cascade="all, delete-orphan")
 
 
