@@ -132,6 +132,46 @@ interface EnrollmentCurve {
 - Backend DELETE endpoints: `/studies/{study_id}` (with linked scenario check), `/scenarios/{scenario_id}`
 - Frontend hooks: `useDeleteStudy`, `useDeleteScenario`
 - Delete buttons with Popconfirm on Studies and Scenarios list pages
+- **Cascade deletes** properly configured (see Database Relationships below)
+
+### Cascade Delete Relationships
+When deleting a Scenario, all related data is automatically deleted:
+```
+Scenario (delete)
+   ├── ScenarioVersions (cascade)
+   │      └── ForecastRuns (cascade)
+   └── Subjects (cascade)
+          └── SubjectVisits (cascade)
+                 └── KitAssignments (cascade)
+```
+
+Key model changes in `app/models/`:
+- `scenario.py`: Added `subjects` relationship with `cascade="all, delete-orphan"`
+- `scenario.py`: Added `forecast_runs` relationship on ScenarioVersion with cascade
+- `subject.py`: Added `scenario` back-reference relationship
+
+## Security Notes
+
+### Current Setup (Local Development)
+- All services run on `localhost` - only accessible from your machine
+- Database: PostgreSQL on `localhost:5433`
+- Backend API: FastAPI on `localhost:8000`
+- Frontend: React on `localhost:3000`
+- No internet exposure - ports are not open externally
+
+### Sensitive Files (in .gitignore)
+These files are excluded from git to protect confidential data:
+- `scenarios/` - Trial scenario JSON files with protocol details
+- `*.docx`, `*.pdf`, `*.xlsx` - Internal documents
+- `.env` - Environment variables and secrets
+- `.claude/` - Claude settings
+
+### For Production Deployment
+If deploying for team access, you must:
+1. Change default passwords in `docker-compose.yml`
+2. Set a real `JWT_SECRET_KEY` (not `change-me-in-production`)
+3. Use HTTPS for encrypted connections
+4. Configure proper firewall/VPN access
 
 ## Build Commands
 ```bash
@@ -174,4 +214,9 @@ uvicorn app.main:app --reload
 4. Enrollment curve: Excel upload, preview table, forecast uses curve data
 5. Backward compat: existing scenarios with enrollment_waves still work
 6. Delete studies (blocked if has linked scenarios)
-7. Delete scenarios (cascades to versions)
+7. Delete scenarios (cascades to versions, forecast runs, subjects, visits, kit assignments)
+
+## GitHub Repository
+- **URL**: https://github.com/kevinchoxyz/Clinical-Supply-Agent
+- **Branch**: master
+- Code only - no confidential trial data or internal documents committed
