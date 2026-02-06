@@ -4,15 +4,13 @@ import { ThunderboltOutlined, SwapOutlined, ExperimentOutlined } from '@ant-desi
 import { useNavigate } from 'react-router-dom';
 import { useScenarios, useVersions } from '../../hooks/useScenarios';
 import { useRunForecast } from '../../hooks/useForecast';
-import { useStudyContext } from '../../context/StudyContext';
 import PageHeader from '../../components/PageHeader';
 
 const ForecastPage: React.FC = () => {
   const navigate = useNavigate();
   const [scenarioId, setScenarioId] = useState<string>('');
   const [version, setVersion] = useState<number | undefined>();
-  const { selectedStudyId } = useStudyContext();
-  const { data: scenarios } = useScenarios(selectedStudyId ? { study_id: selectedStudyId } : undefined);
+  const { data: scenarios } = useScenarios();
   const { data: versions } = useVersions(scenarioId);
   const runForecast = useRunForecast();
 

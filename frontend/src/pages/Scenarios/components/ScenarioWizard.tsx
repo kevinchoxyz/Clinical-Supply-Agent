@@ -15,6 +15,7 @@ import {
   Collapse,
   Typography,
   Divider,
+  Alert,
   message,
 } from 'antd';
 import { PlusOutlined, DeleteOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
@@ -55,7 +56,7 @@ import type {
   EnrollmentCurvePoint,
   Assumptions,
 } from '../../../types/scenario';
-import type { DosingStrategy } from '../../../types/study';
+import type { DosingStrategy, DoseSchedule } from '../../../types/study';
 
 /* ------------------------------------------------------------------ */
 /*  Default empty payload                                              */
@@ -1338,7 +1339,7 @@ const ScenarioWizard: React.FC = () => {
         {
           regimen_id: `REG-${p.regimens.length + 1}`,
           name: '',
-          dose_rule: { type: 'fixed', rows: [] },
+          dose_rule: { type: hasStudy ? 'table' : 'fixed', rows: [] },
           dose_inputs: { weight_kg_mean: 80 },
           visit_dispense: {},
           attributes: {},
@@ -1392,6 +1393,26 @@ const ScenarioWizard: React.FC = () => {
 
   const removeRegimen = (index: number) => {
     setPayload((p) => ({ ...p, regimens: p.regimens.filter((_, i) => i !== index) }));
+  };
+
+  /** Build a DoseRule from the study's dose_schedule for a given regimen */
+  const buildDoseRuleFromStudy = (
+    regimenId: string,
+    cohortToRegimen: Record<string, string>,
+    doseSchedule: DoseSchedule,
+    dosingStrategy: DosingStrategy | undefined,
+  ): DoseTableRow[] => {
+    // Reverse-lookup: find which cohort maps to this regimen
+    const cohortId = Object.entries(cohortToRegimen).find(([, rId]) => rId === regimenId)?.[0];
+    if (!cohortId) return [];
+    const cohortData = doseSchedule.cohorts?.[cohortId];
+    if (!cohortData?.visits) return [];
+    return Object.entries(cohortData.visits).map(([visitId, dose]) => {
+      if (dosingStrategy === 'fixed') {
+        return { visit_id: visitId, dose_value: dose.dose_value, dose_uom: dose.dose_uom ?? '' };
+      }
+      return { visit_id: visitId, per_kg_value: dose.dose_per_kg, per_kg_uom: dose.dose_uom ?? '' };
+    });
   };
 
   const visitOptions = (payload.study_design?.visits ?? []).map((v) => ({
@@ -2246,41 +2267,39 @@ const ScenarioWizard: React.FC = () => {
   /* ---- Regimens step without dispense rules (study-based flow) ---- */
   const studyDosingStrategy: DosingStrategy | undefined = (selectedStudyDetail?.payload?.dosing_strategy as DosingStrategy | undefined) ?? undefined;
   const isStudyFixedDosing = studyDosingStrategy === 'fixed';
-  const hideDoseRule = studyDosingStrategy === 'fixed';
-  const hideDoseInputs = studyDosingStrategy === 'fixed';
 
-  // Build dose_schedule reference card from study
-  const studyDoseSchedule = selectedStudyDetail?.payload?.dose_schedule;
-  const DoseScheduleRefCard = studyDoseSchedule ? (
-    <Card size="small" style={{ background: '#f6f8fa', marginBottom: 16 }}>
-      <Typography.Text strong>Study Dose Schedule (read-only reference)</Typography.Text>
-      <Typography.Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 12 }}>
-        {isStudyFixedDosing ? 'Fixed dosing — doses come from the study.' : 'Weight-based dosing — per-kg values come from the study.'}
-      </Typography.Paragraph>
-      {Object.entries((studyDoseSchedule as { cohorts?: Record<string, { visits?: Record<string, { dose_per_kg?: number; dose_value?: number; dose_uom?: string; phase?: string }> }> }).cohorts ?? {}).map(
-        ([cohortId, cohortData]) => (
-          <div key={cohortId} style={{ marginTop: 8 }}>
-            <Typography.Text strong style={{ fontSize: 12 }}>{cohortId}: </Typography.Text>
-            {Object.entries(cohortData.visits ?? {}).map(([visitId, dose]) => (
-              <Typography.Text key={visitId} type="secondary" style={{ fontSize: 12, marginRight: 8 }}>
-                {visitId}={isStudyFixedDosing ? dose.dose_value : dose.dose_per_kg} {dose.dose_uom}{dose.phase ? ` (${dose.phase})` : ''}
-              </Typography.Text>
-            ))}
-          </div>
-        ),
-      )}
-    </Card>
-  ) : null;
+  // Auto-populate regimen dose_rules from study when cohort_to_regimen changes
+  useEffect(() => {
+    if (!selectedStudyDetail?.payload?.dose_schedule) return;
+    const ds = selectedStudyDetail.payload.dose_schedule as DoseSchedule;
+    const c2r = payload.study_design?.cohort_to_regimen ?? {};
+    if (Object.keys(c2r).length === 0) return;
+
+    setPayload((p) => {
+      let changed = false;
+      const regimens = p.regimens.map((reg) => {
+        if ((reg.dose_rule?.rows ?? []).length > 0) return reg; // already has rows
+        const rows = buildDoseRuleFromStudy(reg.regimen_id, c2r, ds, studyDosingStrategy);
+        if (rows.length === 0) return reg;
+        changed = true;
+        return { ...reg, dose_rule: { ...reg.dose_rule!, type: 'table', rows } };
+      });
+      return changed ? { ...p, regimens } : p;
+    });
+  }, [payload.study_design?.cohort_to_regimen, selectedStudyDetail, studyDosingStrategy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const RegimensOnlyStep = (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card bordered={false} title="Regimens & Mapping">
-        {DoseScheduleRefCard}
+      {/* Arm & Cohort Mapping FIRST — triggers auto-population */}
+      <Card bordered={false} title="Arm & Cohort Mapping">
         <Typography.Paragraph type="secondary">
-          {hideDoseRule
-            ? 'Doses are defined in the study (fixed dosing). Define regimens and visit dispense mapping below.'
-            : 'Dispense rules are defined in the study. Define regimens and map visit dispensing below.'}
+          Map arms and cohorts to regimens. When a cohort is mapped, doses are auto-populated from the study.
         </Typography.Paragraph>
+        {ArmRegimenMapping}
+      </Card>
+
+      {/* Regimens card */}
+      <Card bordered={false} title="Regimens">
         {payload.regimens.map((reg, ri) => (
           <Card
             key={ri}
@@ -2307,115 +2326,112 @@ const ScenarioWizard: React.FC = () => {
                   size="small"
                 />
               </Form.Item>
-              {!hideDoseRule && (
-                <Form.Item label="Dose Rule Type" style={{ margin: 0 }}>
-                  <Select
-                    value={reg.dose_rule?.type ?? 'fixed'}
-                    onChange={(val) =>
-                      updateRegimen(ri, {
-                        dose_rule: { ...reg.dose_rule!, type: val, rows: val === 'table' ? (reg.dose_rule?.rows ?? []) : [] },
-                      })
-                    }
-                    size="small"
-                    style={{ width: 150 }}
-                    options={[
-                      { value: 'fixed', label: 'Fixed' },
-                      { value: 'table', label: 'Table (per-visit)' },
-                    ]}
-                  />
-                </Form.Item>
-              )}
             </Space>
 
-            {!hideDoseRule && (reg.dose_rule?.type ?? 'fixed') === 'fixed' && (
-              <Space wrap style={{ marginTop: 12, marginBottom: 8 }}>
-                <Form.Item label="Dose Value" style={{ margin: 0 }}>
-                  <InputNumber
-                    value={reg.dose_rule?.dose_value}
-                    onChange={(v) => updateRegimen(ri, { dose_rule: { ...reg.dose_rule!, dose_value: v ?? undefined } })}
-                    size="small"
-                    style={{ width: 120 }}
-                  />
-                </Form.Item>
-                <Form.Item label="Dose UOM" style={{ margin: 0 }}>
-                  <Input
-                    value={reg.dose_rule?.dose_uom ?? ''}
-                    onChange={(e) => updateRegimen(ri, { dose_rule: { ...reg.dose_rule!, dose_uom: e.target.value } })}
-                    size="small"
-                    style={{ width: 120 }}
-                    placeholder="e.g. mg"
-                  />
-                </Form.Item>
-              </Space>
+            {(reg.dose_rule?.rows ?? []).length > 0 && (
+              <Alert
+                type="info"
+                showIcon
+                message="Doses pre-populated from study. Edit if needed."
+                style={{ marginBottom: 12 }}
+              />
             )}
 
-            {!hideDoseRule && reg.dose_rule?.type === 'table' && (
-              <>
-                <Divider orientation="left" plain style={{ margin: '8px 0' }}>
-                  Dose Table (per-visit doses)
-                </Divider>
-                <Table
-                  size="small"
-                  pagination={false}
-                  dataSource={(reg.dose_rule.rows ?? []).map((row, i) => ({ ...row, _idx: i }))}
-                  rowKey="_idx"
-                  columns={[
-                    {
-                      title: 'Visit',
-                      dataIndex: 'visit_id',
-                      width: 160,
-                      render: (val: string, _: DoseTableRow & { _idx: number }) => (
-                        <Select
-                          value={val || undefined}
-                          onChange={(v) => updateDoseTableRow(ri, _._idx, { visit_id: v })}
-                          size="small"
-                          style={{ width: '100%' }}
-                          placeholder="Select visit"
-                          options={visitOptions}
-                        />
-                      ),
-                    },
-                    {
-                      title: 'Fixed Dose',
-                      dataIndex: 'dose_value',
-                      width: 120,
-                      render: (val: number | undefined, _: DoseTableRow & { _idx: number }) => (
-                        <InputNumber
-                          value={val}
-                          onChange={(v) => updateDoseTableRow(ri, _._idx, { dose_value: v ?? undefined })}
-                          size="small"
-                          style={{ width: '100%' }}
-                        />
-                      ),
-                    },
-                    {
-                      title: 'Dose UOM',
-                      dataIndex: 'dose_uom',
-                      width: 100,
-                      render: (val: string | undefined, _: DoseTableRow & { _idx: number }) => (
-                        <Input
-                          value={val ?? ''}
-                          onChange={(e) => updateDoseTableRow(ri, _._idx, { dose_uom: e.target.value })}
-                          size="small"
-                        />
-                      ),
-                    },
-                    {
-                      title: '',
-                      width: 50,
-                      render: (_: unknown, __: DoseTableRow & { _idx: number }) => (
-                        <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => removeDoseTableRow(ri, __._idx)} />
-                      ),
-                    },
-                  ]}
-                />
-                <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addDoseTableRow(ri)} style={{ marginTop: 8 }}>
-                  Add Row
-                </Button>
-              </>
-            )}
+            {/* Dose table — always shown for study-based regimens */}
+            <Divider orientation="left" plain style={{ margin: '8px 0' }}>
+              Dose Table (per-visit doses)
+            </Divider>
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={(reg.dose_rule?.rows ?? []).map((row, i) => ({ ...row, _idx: i }))}
+              rowKey="_idx"
+              columns={[
+                {
+                  title: 'Visit',
+                  dataIndex: 'visit_id',
+                  width: 160,
+                  render: (val: string, _: DoseTableRow & { _idx: number }) => (
+                    <Select
+                      value={val || undefined}
+                      onChange={(v) => updateDoseTableRow(ri, _._idx, { visit_id: v })}
+                      size="small"
+                      style={{ width: '100%' }}
+                      placeholder="Select visit"
+                      options={visitOptions}
+                    />
+                  ),
+                },
+                ...(isStudyFixedDosing
+                  ? [
+                      {
+                        title: 'Dose Value',
+                        dataIndex: 'dose_value',
+                        width: 120,
+                        render: (val: number | undefined, _: DoseTableRow & { _idx: number }) => (
+                          <InputNumber
+                            value={val}
+                            onChange={(v) => updateDoseTableRow(ri, _._idx, { dose_value: v ?? undefined })}
+                            size="small"
+                            style={{ width: '100%' }}
+                          />
+                        ),
+                      },
+                      {
+                        title: 'Dose UOM',
+                        dataIndex: 'dose_uom',
+                        width: 100,
+                        render: (val: string | undefined, _: DoseTableRow & { _idx: number }) => (
+                          <Input
+                            value={val ?? ''}
+                            onChange={(e) => updateDoseTableRow(ri, _._idx, { dose_uom: e.target.value })}
+                            size="small"
+                          />
+                        ),
+                      },
+                    ]
+                  : [
+                      {
+                        title: 'Per-kg Value',
+                        dataIndex: 'per_kg_value',
+                        width: 120,
+                        render: (val: number | undefined, _: DoseTableRow & { _idx: number }) => (
+                          <InputNumber
+                            value={val}
+                            onChange={(v) => updateDoseTableRow(ri, _._idx, { per_kg_value: v ?? undefined })}
+                            size="small"
+                            style={{ width: '100%' }}
+                          />
+                        ),
+                      },
+                      {
+                        title: 'Per-kg UOM',
+                        dataIndex: 'per_kg_uom',
+                        width: 100,
+                        render: (val: string | undefined, _: DoseTableRow & { _idx: number }) => (
+                          <Input
+                            value={val ?? ''}
+                            onChange={(e) => updateDoseTableRow(ri, _._idx, { per_kg_uom: e.target.value })}
+                            size="small"
+                          />
+                        ),
+                      },
+                    ]),
+                {
+                  title: '',
+                  width: 50,
+                  render: (_: unknown, __: DoseTableRow & { _idx: number }) => (
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => removeDoseTableRow(ri, __._idx)} />
+                  ),
+                },
+              ]}
+            />
+            <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => addDoseTableRow(ri)} style={{ marginTop: 8 }}>
+              Add Row
+            </Button>
 
-            {!hideDoseInputs && (
+            {/* Weight Mean/SD — only for non-fixed dosing */}
+            {!isStudyFixedDosing && (
               <>
                 <Divider orientation="left" plain style={{ margin: '8px 0' }}>
                   Dose Inputs
@@ -2442,47 +2458,11 @@ const ScenarioWizard: React.FC = () => {
                 </Space>
               </>
             )}
-
-            <Divider orientation="left" plain style={{ margin: '8px 0' }}>
-              Visit Dispense Mapping
-            </Divider>
-            <p style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>
-              For each visit, select which dispense rule applies (from the study's dispense rules).
-            </p>
-            <Space wrap>
-              {visitOptions.map((vo) => (
-                <Form.Item key={vo.value} label={vo.label} style={{ margin: '0 8px 8px 0' }}>
-                  <Select
-                    size="small"
-                    value={reg.visit_dispense[vo.value] || undefined}
-                    onChange={(val) => {
-                      const vd = { ...reg.visit_dispense };
-                      if (val) {
-                        vd[vo.value] = val;
-                      } else {
-                        delete vd[vo.value];
-                      }
-                      updateRegimen(ri, { visit_dispense: vd });
-                    }}
-                    placeholder="Select rule"
-                    style={{ width: 180 }}
-                    allowClear
-                    options={dispenseRuleOptions}
-                    notFoundContent="Dispense rules come from the study"
-                  />
-                </Form.Item>
-              ))}
-            </Space>
           </Card>
         ))}
         <Button type="dashed" block icon={<PlusOutlined />} onClick={addRegimen}>
           Add Regimen
         </Button>
-      </Card>
-
-      {/* Arm/Cohort → Regimen Mapping */}
-      <Card bordered={false} title="Arm & Cohort Mapping">
-        {ArmRegimenMapping}
       </Card>
     </Space>
   );

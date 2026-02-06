@@ -112,10 +112,15 @@ interface EnrollmentCurve {
 - **With-study order**: Select Study → Study Design → Regimens & Mapping → Assumptions → Review
 - Moved arm→regimen and cohort→regimen mapping from StudyDesignStep to Regimens steps
 - Auto-populate arms/cohorts from study when selected
-- Conditional regimen UI based on dosing_strategy:
-  - Fixed: hides dose_rule editing, hides dose_inputs
-  - Weight-based: shows dose_inputs (weight_kg_mean, weight_kg_sd)
-- Shows study dose_schedule as read-only reference card
+- **With-study Regimens step (RegimensOnlyStep)**:
+  - Arm & Cohort Mapping card shown **first** — mapping a cohort triggers auto-population of dose rows
+  - `buildDoseRuleFromStudy()` helper reverse-looks up cohort→regimen and fills dose_rule rows from study dose_schedule
+  - Dose table always shown (type `'table'`), pre-filled from study; editable by user
+  - Fixed dosing: columns are Visit, Dose Value, Dose UOM
+  - Weight-based dosing: columns are Visit, Per-kg Value, Per-kg UOM; Weight Mean/SD inputs shown
+  - No "Dose Rule Type" selector, no "Visit Dispense Mapping" section
+  - Info banner: "Doses pre-populated from study. Edit if needed."
+- **Forecast page**: Scenario dropdown shows ALL scenarios (no study_id filter)
 
 ### Phase 3: Enrollment Curve
 - New `EnrollmentCurvePoint` and `EnrollmentCurve` types (backend + frontend)
