@@ -2268,14 +2268,14 @@ const ScenarioWizard: React.FC = () => {
   const studyDosingStrategy: DosingStrategy | undefined = (selectedStudyDetail?.payload?.dosing_strategy as DosingStrategy | undefined) ?? undefined;
   const isStudyFixedDosing = studyDosingStrategy === 'fixed';
 
-  // Auto-populate regimen dose_rules from study when cohort_to_regimen changes
+  // Auto-populate regimen dose_rules from study when cohort_to_regimen or regimens change
   useEffect(() => {
     if (!selectedStudyDetail?.payload?.dose_schedule) return;
     const ds = selectedStudyDetail.payload.dose_schedule as DoseSchedule;
-    const c2r = payload.study_design?.cohort_to_regimen ?? {};
-    if (Object.keys(c2r).length === 0) return;
 
     setPayload((p) => {
+      const c2r = p.study_design?.cohort_to_regimen ?? {};
+      if (Object.keys(c2r).length === 0) return p;
       let changed = false;
       const regimens = p.regimens.map((reg) => {
         if ((reg.dose_rule?.rows ?? []).length > 0) return reg; // already has rows
@@ -2286,7 +2286,7 @@ const ScenarioWizard: React.FC = () => {
       });
       return changed ? { ...p, regimens } : p;
     });
-  }, [payload.study_design?.cohort_to_regimen, selectedStudyDetail, studyDosingStrategy]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [payload.study_design?.cohort_to_regimen, payload.regimens.length, selectedStudyDetail, studyDosingStrategy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const RegimensOnlyStep = (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -2378,21 +2378,27 @@ const ScenarioWizard: React.FC = () => {
                         ),
                       },
                       {
-                        title: 'Dose UOM',
+                        title: 'UOM',
                         dataIndex: 'dose_uom',
-                        width: 100,
+                        width: 120,
                         render: (val: string | undefined, _: DoseTableRow & { _idx: number }) => (
-                          <Input
-                            value={val ?? ''}
-                            onChange={(e) => updateDoseTableRow(ri, _._idx, { dose_uom: e.target.value })}
+                          <Select
+                            value={val || undefined}
+                            onChange={(v) => updateDoseTableRow(ri, _._idx, { dose_uom: v })}
                             size="small"
+                            style={{ width: '100%' }}
+                            options={[
+                              { value: 'mg', label: 'mg' },
+                              { value: 'mcg', label: 'mcg' },
+                              { value: 'ng', label: 'ng' },
+                            ]}
                           />
                         ),
                       },
                     ]
                   : [
                       {
-                        title: 'Per-kg Value',
+                        title: 'Dose/kg',
                         dataIndex: 'per_kg_value',
                         width: 120,
                         render: (val: number | undefined, _: DoseTableRow & { _idx: number }) => (
@@ -2405,14 +2411,20 @@ const ScenarioWizard: React.FC = () => {
                         ),
                       },
                       {
-                        title: 'Per-kg UOM',
+                        title: 'UOM',
                         dataIndex: 'per_kg_uom',
-                        width: 100,
+                        width: 120,
                         render: (val: string | undefined, _: DoseTableRow & { _idx: number }) => (
-                          <Input
-                            value={val ?? ''}
-                            onChange={(e) => updateDoseTableRow(ri, _._idx, { per_kg_uom: e.target.value })}
+                          <Select
+                            value={val || undefined}
+                            onChange={(v) => updateDoseTableRow(ri, _._idx, { per_kg_uom: v })}
                             size="small"
+                            style={{ width: '100%' }}
+                            options={[
+                              { value: 'ng_per_kg', label: 'ng/kg' },
+                              { value: 'mcg_per_kg', label: 'mcg/kg' },
+                              { value: 'mg_per_kg', label: 'mg/kg' },
+                            ]}
                           />
                         ),
                       },
